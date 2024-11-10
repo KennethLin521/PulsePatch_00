@@ -3,6 +3,8 @@ package com.example.pulsepatch_00
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothSocket
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -11,7 +13,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.Message
-import android.util.Log
 import android.view.View
 import android.widget.Button
 import android.widget.ProgressBar
@@ -29,16 +30,19 @@ class MainActivity : ComponentActivity() {
     private lateinit var toggleButton: Button
     private lateinit var statusTextView: TextView
     private lateinit var progressBar: ProgressBar
-
-    private val CONNECTING_STATUS = 1
-    private val MESSAGE_READ = 2
+    private val REQUEST_ENABLE_BT = 3 // Constant for enabling Bluetooth
+    private var connectedThread: ConnectedThread? = null
+    private var createConnectThread: CreateConnectThread? = null
+    private var bluetoothGatt: BluetoothGatt? = null
+    private val bluetoothLeScanner = bluetoothAdapter.bluetoothLeScanner
+    private var scanning = false
+    private var handler = Handler()
+    // Stops scanning after 10 seconds.
+    private val SCAN_PERIOD: Long = 10000
 
     companion object {
         var handler: Handler? = null
         var mmSocket: BluetoothSocket? = null
-        var connectedThread: ConnectedThread? = null
-        var createConnectThread: CreateConnectThread? = null
-
         private const val REQUEST_BLUETOOTH_PERMISSIONS = 1
     }
 
@@ -53,6 +57,10 @@ class MainActivity : ComponentActivity() {
         progressBar = findViewById(R.id.progressBar)
         progressBar.visibility = View.GONE
 
+        // Check Bluetooth feature availability
+        val bluetoothAvailable = packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH)
+        val bluetoothLEAvailable = packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)
+
         // Check for Bluetooth permissions
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             requestBluetoothPermissions()
@@ -62,7 +70,10 @@ class MainActivity : ComponentActivity() {
 
         deviceName = intent.getStringExtra("deviceName")
         deviceAddress = intent.getStringExtra("deviceAddress")
-        bluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
+
+        // Get BluetoothAdapter using BluetoothManager
+        val bluetoothManager = getSystemService(BluetoothManager::class.java)
+        bluetoothAdapter = bluetoothManager?.adapter ?: BluetoothAdapter.getDefaultAdapter()
 
         if (deviceName != null && deviceAddress != null) {
             statusTextView.text = "Connecting to $deviceName..."
@@ -149,9 +160,88 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun initBluetooth() {
-        // Your existing code to initialize Bluetooth, if any
+        val bluetoothManager = getSystemService(BluetoothManager::class.java) as BluetoothManager
+        bluetoothAdapter = bluetoothManager.adapter
+        if (!bluetoothAdapter.isEnabled) {
+            val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
+            if (ActivityCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.BLUETOOTH_CONNECT
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                // TODO: Consider calling
+                //    ActivityCompat#requestPermissions
+                // here to request the missing permissions, and then overriding
+                //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
+                //                                          int[] grantResults)
+                // to handle the case where the user grants the permission. See the documentation
+                // for ActivityCompat#requestPermissions for more details.
+                return
+            }
+            startActivityForResult(enableBtIntent, REQUEST_ENABLE_BT)
+        }
+
+        if (bluetoothAdapter == null) {
+            // Device doesn't support Bluetooth, inform the user
+            Toast.makeText(this, "Bluetooth not supported on this device", Toast.LENGTH_SHORT).show()
+            finish()
     }
 
-    // Rest of your code including CreateConnectThread and ConnectedThread...
+    // Define CreateConnectThread and ConnectedThread classes here...
+}
+
+    private fun scanLeDevice() {
+        if (!scanning) { // Stops scanning after a pre-defined scan period.
+            handler.postDelayed({
+                scanning = false
+                bluetoothLeScanner.stopScan(leScanCallback)
+            }, SCAN_PERIOD)
+            scanning = true
+            if (ActivityCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.BLUETOOTH_SCAN
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                // TODO: Consider calling
+                //    ActivityCompat#requestPermissions
+                // here to request the missing permissions, and then overriding
+                //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
+                //                                          int[] grantResults)
+                // to handle the case where the user grants the permission. See the documentation
+                // for ActivityCompat#requestPermissions for more details.
+                return
+            }
+            bluetoothLeScanner.startScan(leScanCallback)
+        } else {
+            scanning = false
+            bluetoothLeScanner.stopScan(leScanCallback)
+        }
+    }
+
+    private val leDeviceListAdapter = LeDeviceListAdapter()
+    // Device scan callback.
+    private val leScanCallback: ScanCallback = object : ScanCallback() {
+        override fun onScanResult(callbackType: Int, result: ScanResult) {
+            super.onScanResult(callbackType, result)
+            leDeviceListAdapter.addDevice(result.device)
+            leDeviceListAdapter.notifyDataSetChanged()
+        }
+    }
+
+
+
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_ENABLE_BT) {
+            if (resultCode == RESULT_OK) {
+                // Bluetooth has been enabled
+                Toast.makeText(this, "Bluetooth enabled", Toast.LENGTH_SHORT).show()
+            } else {
+                // User denied Bluetooth, handle accordingly
+                Toast.makeText(this, "Bluetooth is required for this app", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
 }
